@@ -910,7 +910,7 @@ const Main = ({
                   className="mt-4 flex flex-col"
                   data-testid={`slug-${group.profile.slug}`}
                   key={group.profile.slug}>
-                  {/* If the group is readonly and empty don't leave a floating header when the user cant see the create box due 
+                  {/* If the group is readonly and empty don't leave a floating header when the user cant see the create box due
                     to it being readonly for that user */}
                   {group.eventTypes.length === 0 && group.metadata.readOnly ? null : (
                     <EventTypeListHeading
@@ -1011,7 +1011,7 @@ const EventTypesPage: React.FC & {
     <Shell
       withoutMain={false}
       title="Event Types"
-      description="Create events to share for people to book on your calendar."
+      description="Create events to share for people to book on your calendar.ok"
       withoutSeo
       heading={t("event_types_page_title")}
       hideHeadingOnMobile

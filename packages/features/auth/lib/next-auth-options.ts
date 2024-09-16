@@ -11,23 +11,20 @@ import GoogleProvider from "next-auth/providers/google";
 import checkLicense from "@calcom/features/ee/common/server/checkLicense";
 import createUsersAndConnectToOrg from "@calcom/features/ee/dsync/lib/users/createUsersAndConnectToOrg";
 import ImpersonationProvider from "@calcom/features/ee/impersonation/lib/ImpersonationProvider";
-import { getOrgFullOrigin, subdomainSuffix } from "@calcom/features/ee/organizations/lib/orgDomains";
 import { clientSecretVerifier, hostedCal, isSAMLLoginEnabled } from "@calcom/features/ee/sso/lib/saml";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
 import { HOSTED_CAL_FEATURES } from "@calcom/lib/constants";
 import { ENABLE_PROFILE_SWITCHER, IS_TEAM_BILLING_ENABLED, WEBAPP_URL } from "@calcom/lib/constants";
 import { symmetricDecrypt, symmetricEncrypt } from "@calcom/lib/crypto";
-import { defaultCookies } from "@calcom/lib/default-cookies";
 import { isENVDev } from "@calcom/lib/env";
 import logger from "@calcom/lib/logger";
 import { randomString } from "@calcom/lib/random";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
 import { UserRepository } from "@calcom/lib/server/repository/user";
 import slugify from "@calcom/lib/slugify";
 import prisma from "@calcom/prisma";
 import { IdentityProvider, MembershipRole } from "@calcom/prisma/enums";
-import { teamMetadataSchema, userMetadata } from "@calcom/prisma/zod-utils";
+import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 
 import { ErrorCode } from "./ErrorCode";
 import { isPasswordValid } from "./isPasswordValid";
@@ -385,6 +382,15 @@ if (isSAMLLoginEnabled) {
   );
 }
 
+const newprov = [
+  EmailProvider({
+    type: "email",
+    maxAge: 10 * 60 * 60, // Magic links are valid for 10 min only
+    // Here we setup the sendVerificationRequest that calls the email template with the identifier (email) and token to verify.
+    sendVerificationRequest: async (props) => (await import("./sendVerificationRequest")).default(props),
+  }),
+];
+
 providers.push(
   EmailProvider({
     type: "email",
@@ -413,201 +419,47 @@ const mapIdentityProvider = (providerName: string) => {
 export const AUTH_OPTIONS: AuthOptions = {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
-  adapter: calcomAdapter,
-  session: {
-    strategy: "jwt",
+  // adapter: calcomAdapter,
+  // cookies: defaultCookies(WEBAPP_URL?.startsWith("https://")),
+  // pages: {
+  //   signIn: "/auth/login",
+  //   signOut: "/auth/logout",
+  //   error: "/auth/error", // Error code passed in query string as ?error=
+  //   verifyRequest: "/auth/verify",
+  //   // newUser: "/auth/new", // New users will be directed here on first sign in (leave the property out if not of interest)
+  // },
+  providers: [],
+  debug: true,
+  events: {
+    session: async (session) => {
+      console.log("session", session);
+      return;
+    },
   },
   jwt: {
-    // decorate the native JWT encode function
-    // Impl. detail: We don't pass through as this function is called with encode/decode functions.
-    encode: async ({ token, maxAge, secret }) => {
-      if (token?.sub && isNumber(token.sub)) {
-        const user = await prisma.user.findFirst({
-          where: { id: Number(token.sub) },
-          select: { metadata: true },
-        });
-        // if no user is found, we still don't want to crash here.
-        if (user) {
-          const metadata = userMetadata.parse(user.metadata);
-          if (metadata?.sessionTimeout) {
-            maxAge = metadata.sessionTimeout * 60;
-          }
-        }
-      }
-      return encode({ secret, token, maxAge });
+    secret: process.env.JWT_SECRET,
+    encode: async ({ token, secret }) => {
+      console.log({ token, secret });
+      const encodedToken = encode({ ...token, iat: Date.now() }, secret);
+      return encodedToken;
+    },
+    decode: async ({ token, secret }) => {
+      console.log({ token, secret });
+      const decodedToken = await decode(token, secret);
+      return decodedToken;
     },
   },
-  cookies: defaultCookies(WEBAPP_URL?.startsWith("https://")),
-  pages: {
-    signIn: "/auth/login",
-    signOut: "/auth/logout",
-    error: "/auth/error", // Error code passed in query string as ?error=
-    verifyRequest: "/auth/verify",
-    // newUser: "/auth/new", // New users will be directed here on first sign in (leave the property out if not of interest)
-  },
-  providers,
   callbacks: {
-    async jwt({
-      // Always available but with a little difference in value
-      token,
-      // Available only in case of signIn, signUp or useSession().update call.
-      trigger,
-      // Available when useSession().update is called. The value will be the POST data
-      session,
-      // Available only in the first call once the user signs in. Not available in subsequent calls
-      user,
-      // Available only in the first call once the user signs in. Not available in subsequent calls
-      account,
-    }) {
-      log.debug("callbacks:jwt", safeStringify({ token, user, account, trigger, session }));
-      // The data available in 'session' depends on what data was supplied in update method call of session
-      if (trigger === "update") {
-        return {
-          ...token,
-          profileId: session?.profileId ?? token.profileId ?? null,
-          upId: session?.upId ?? token.upId ?? null,
-          locale: session?.locale ?? token.locale ?? "en",
-          name: session?.name ?? token.name,
-          username: session?.username ?? token.username,
-          email: session?.email ?? token.email,
-        } as JWT;
-      }
-      const autoMergeIdentities = async () => {
-        const existingUser = await prisma.user.findFirst({
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          where: { email: token.email! },
-          select: {
-            id: true,
-            username: true,
-            name: true,
-            email: true,
-            role: true,
-            locale: true,
-            movedToProfileId: true,
-            teams: {
-              include: {
-                team: true,
-              },
-            },
-          },
-        });
-
-        if (!existingUser) {
-          return token;
-        }
-
-        // Check if the existingUser has any active teams
-        const belongsToActiveTeam = checkIfUserBelongsToActiveTeam(existingUser);
-        const { teams: _teams, ...existingUserWithoutTeamsField } = existingUser;
-        const allProfiles = await ProfileRepository.findAllProfilesForUserIncludingMovedUser(existingUser);
-        log.debug(
-          "callbacks:jwt:autoMergeIdentities",
-          safeStringify({
-            allProfiles,
-          })
-        );
-        const { upId } = determineProfile({ profiles: allProfiles, token });
-
-        const profile = await ProfileRepository.findByUpId(upId);
-        if (!profile) {
-          throw new Error("Profile not found");
-        }
-
-        const profileOrg = profile?.organization;
-
-        return {
-          ...existingUserWithoutTeamsField,
-          ...token,
-          profileId: profile.id,
-          upId,
-          belongsToActiveTeam,
-          // All organizations in the token would be too big to store. It breaks the sessions request.
-          // So, we just set the currently switched organization only here.
-          org: profileOrg
-            ? {
-                id: profileOrg.id,
-                name: profileOrg.name,
-                slug: profileOrg.slug ?? profileOrg.requestedSlug ?? "",
-                fullDomain: getOrgFullOrigin(profileOrg.slug ?? profileOrg.requestedSlug ?? ""),
-                domainSuffix: subdomainSuffix(),
-              }
-            : null,
-        } as JWT;
-      };
-      if (!user) {
-        return await autoMergeIdentities();
-      }
-      if (!account) {
-        return token;
-      }
-      if (account.type === "credentials") {
-        // return token if credentials,saml-idp
-        if (account.provider === "saml-idp") {
-          return token;
-        }
-        // any other credentials, add user info
-        return {
-          ...token,
-          id: user.id,
-          name: user.name,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          impersonatedBy: user.impersonatedBy,
-          belongsToActiveTeam: user?.belongsToActiveTeam,
-          org: user?.org,
-          locale: user?.locale,
-          profileId: user.profile?.id ?? token.profileId ?? null,
-          upId: user.profile?.upId ?? token.upId ?? null,
-        } as JWT;
-      }
-
-      // The arguments above are from the provider so we need to look up the
-      // user based on those values in order to construct a JWT.
-      if (account.type === "oauth") {
-        if (!account.provider || !account.providerAccountId) {
-          return token;
-        }
-        const idP = account.provider === "saml" ? IdentityProvider.SAML : IdentityProvider.GOOGLE;
-
-        const existingUser = await prisma.user.findFirst({
-          where: {
-            AND: [
-              {
-                identityProvider: idP,
-              },
-              {
-                identityProviderId: account.providerAccountId,
-              },
-            ],
-          },
-        });
-
-        if (!existingUser) {
-          return await autoMergeIdentities();
-        }
-
-        return {
-          ...token,
-          id: existingUser.id,
-          name: existingUser.name,
-          username: existingUser.username,
-          email: existingUser.email,
-          role: existingUser.role,
-          impersonatedBy: token.impersonatedBy,
-          belongsToActiveTeam: token?.belongsToActiveTeam as boolean,
-          org: token?.org,
-          locale: existingUser.locale,
-        } as JWT;
-      }
-
-      if (account.type === "email") {
-        return await autoMergeIdentities();
-      }
-
-      return token;
+    async jwt({ token, user, account, profile, isNewUser }) {
+      console.log({ token, user, account, profile, isNewUser });
+      log.debug(
+        "callbacks:jwt - JWT callback called",
+        safeStringify({ token, user, account, profile, isNewUser })
+      );
     },
+
     async session({ session, token, user }) {
+      console.log({ session, token, user });
       log.debug("callbacks:session - Session callback called", safeStringify({ session, token, user }));
       const hasValidLicense = await checkLicense(prisma);
       const profileId = token.profileId;

@@ -9,7 +9,7 @@ const getInstallCountPerApp = async () => {
       c."appId",
       COUNT(*)::integer AS "installCount"
     FROM
-      "Credential" c
+     "cal"."Credential" c
     WHERE
       c."appId" IS NOT NULL
     GROUP BY

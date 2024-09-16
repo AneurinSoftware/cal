@@ -926,7 +926,6 @@ function SideBar({ bannersHeight, user }: SideBarProps) {
       icon: Settings,
     },
   ];
-
   return (
     <div className="relative">
       <aside

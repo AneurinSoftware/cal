@@ -4,6 +4,7 @@ import { getSession as getSessionInner } from "next-auth/react";
 
 export async function getSession(options: GetSessionParams): Promise<Session | null> {
   const session = await getSessionInner(options);
+  console.log("get inner session", session);
 
   // that these are equal are ensured in `[...nextauth]`'s callback
   return session as Session | null;
