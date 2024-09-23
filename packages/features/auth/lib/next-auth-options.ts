@@ -2,7 +2,7 @@ import type { Membership, Team, UserPermissionRole } from "@prisma/client";
 import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 import type { AuthOptions, Session } from "next-auth";
 import type { JWT } from "next-auth/jwt";
-import { encode } from "next-auth/jwt";
+import { encode, decode } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
 import CredentialsProvider from "next-auth/providers/credentials";
 import EmailProvider from "next-auth/providers/email";
@@ -440,22 +440,20 @@ export const AUTH_OPTIONS: AuthOptions = {
     secret: process.env.JWT_SECRET,
     encode: async ({ token, secret }) => {
       console.log({ token, secret });
-      const encodedToken = encode({ ...token, iat: Date.now() }, secret);
+      const encodedToken = encode({ ...token, maxAge: Date.now(), secret });
       return encodedToken;
     },
     decode: async ({ token, secret }) => {
       console.log({ token, secret });
-      const decodedToken = await decode(token, secret);
+      const decodedToken = await decode({ token, secret });
       return decodedToken;
     },
   },
   callbacks: {
-    async jwt({ token, user, account, profile, isNewUser }) {
-      console.log({ token, user, account, profile, isNewUser });
-      log.debug(
-        "callbacks:jwt - JWT callback called",
-        safeStringify({ token, user, account, profile, isNewUser })
-      );
+    async jwt({ token, user, account, profile }) {
+      console.log({ token, user, account, profile });
+      log.debug("callbacks:jwt - JWT callback called", safeStringify({ token, user, account, profile }));
+      return Promise.resolve(token);
     },
 
     async session({ session, token, user }) {

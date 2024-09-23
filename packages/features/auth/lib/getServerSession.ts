@@ -144,7 +144,7 @@ export async function getServerSession(options: {
     headers: {
       "Content-Type": "application/json",
       Cookie: req.headers.cookie,
-    },
+    } as HeadersInit,
   });
   const sesh = await getSession.json();
   if (!sesh) {
