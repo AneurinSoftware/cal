@@ -139,7 +139,7 @@ export async function getServerSession(options: {
   log.debug("Getting server session");
   const { req, authOptions: { secret } = {} } = options;
 
-  const getSession = await fetch("http://localhost:3006/api/auth/session", {
+  const getSession = await fetch(`${process.env.ANEURIN_API_APP_DOMAIN}/api/auth/session`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
