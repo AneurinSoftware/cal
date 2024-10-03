@@ -146,13 +146,15 @@ export async function getServerSession(options: {
       Cookie: req.headers.cookie,
     } as HeadersInit,
   });
-  const sesh = await getSession.json();
-  if (!sesh) {
+  console.log({ getSession });
+  const _user = await getSession.json();
+  console.log({ _user });
+  if (!_user) {
     log.debug("Couldnt get token");
     return null;
   }
 
-  const cachedSession = CACHE.get(JSON.stringify(sesh));
+  const cachedSession = CACHE.get(JSON.stringify(_user));
 
   if (cachedSession) {
     return cachedSession;
@@ -160,7 +162,7 @@ export async function getServerSession(options: {
 
   const userFromDb = await prisma.user.findUnique({
     where: {
-      id: sesh.user.calUser.id,
+      id: _user.calUser.id,
     },
     // TODO: Re-enable once we get confirmation from compliance that this is okay.
     // cacheStrategy: { ttl: 60, swr: 1 },
@@ -171,9 +173,7 @@ export async function getServerSession(options: {
     return null;
   }
 
-  console.log({ sesh });
-
-  const upId = `usr-${sesh.user.calUser.id}`;
+  const upId = `usr-${_user.calUser.id}`;
 
   const user = await UserRepository.enrichUserWithTheProfile({
     user: userFromDb,
@@ -182,7 +182,7 @@ export async function getServerSession(options: {
 
   const session: Session = {
     hasValidLicense: false,
-    expires: sesh.session.expires,
+    expires: new Date().toISOString(),
     user: {
       id: user.id,
       name: user.name,
@@ -206,19 +206,19 @@ export async function getServerSession(options: {
 
   // const session: Session = {
   //   hasValidLicense: true,
-  //   expires: sesh.session.expires,
+  //   expires: _user.session.expires,
   //   user: {
-  //     id: sesh.user.calUser.id,
-  //     name: sesh.user.calUser.name,
-  //     username: sesh.user.calUser.username,
-  //     email: sesh.user.email,
-  //     emailVerified: sesh.user.emailVerified,
-  //     email_verified: sesh.user.emailVerified !== null,
-  //     role: sesh.user.calUser.role,
-  //     image: sesh.user.calUser.image,
+  //     id: _user.user.calUser.id,
+  //     name: _user.user.calUser.name,
+  //     username: _user.user.calUser.username,
+  //     email: _user.user.email,
+  //     emailVerified: _user.user.emailVerified,
+  //     email_verified: _user.user.emailVerified !== null,
+  //     role: _user.user.calUser.role,
+  //     image: _user.user.calUser.image,
   //     belongsToActiveTeam: false,
   //     org: undefined,
-  //     locale: sesh.user.calUser.locale ?? "en",
+  //     locale: _user.user.calUser.locale ?? "en",
   //     profile: user.profile,
   //   },
   //   profileId: null,
